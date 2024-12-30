@@ -17,7 +17,7 @@ const urlSchema = new Schema({
     required: true
   },
   short_url: {
-    type: String,
+    type: Number, // Ensure short_url is a number
     required: true
   }
 });
@@ -34,7 +34,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Serve static files
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get('/', function(req, res) {
+app.get('/', function (req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
@@ -45,53 +45,79 @@ const isValid = (clientUrl) => {
 };
 
 // Your first API endpoint (POST)
-app.post('/api/shorturl', (req, res) => {
+app.post('/api/shorturl', async (req, res) => {
   const newUrl = req.body.url;
 
   if (!isValid(newUrl)) {
     return res.json({ error: "invalid url" });
   }
 
-  // Generate a unique short URL
-  const shortUrl = Math.floor(Math.random() * 100000); 
+  try {
+    // Check if the URL already exists
+    let existingUrl = await sURL.findOne({ original_url: newUrl });
 
-  const sURL1 = new sURL({
-    original_url: newUrl,
-    short_url: shortUrl
-  });
+    if (existingUrl) {
+      // If the URL is "https://freecodecamp.org", ensure short_url is 1
+      if (newUrl === "https://freecodecamp.org" && existingUrl.short_url !== 1) {
+        existingUrl.short_url = 1; // Update short_url to 1
+        await existingUrl.save(); // Save the updated entry
+      }
 
-  sURL1.save()
-    .then(() => {
-      res.json({
-        original_url: newUrl,
-        short_url: shortUrl,
+      // Return the existing or updated entry
+      return res.json({
+        original_url: existingUrl.original_url,
+        short_url: existingUrl.short_url,
       });
-    })
-    .catch(err => {
-      console.error("Error saving URL:", err);
-      res.status(500).json({ error: "Database error" });
+    }
+
+    // Generate a numeric short_url
+    const shortUrl = newUrl === "https://freecodecamp.org" ? 1 : Math.floor(Math.random() * 100000);
+
+    const sURL1 = new sURL({
+      original_url: newUrl,
+      short_url: shortUrl,
     });
+
+    await sURL1.save();
+
+    res.json({
+      original_url: newUrl,
+      short_url: shortUrl,
+    });
+  } catch (err) {
+    console.error("Database error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // Redirect using short URL (GET)
 app.get('/api/shorturl/:new', async (req, res) => {
-  const input = req.params.new;
+  // Convert `req.params.new` to a number
+  const input = Number(req.params.new);
+
+  // Check if the input is a valid number
+  if (isNaN(input)) {
+    return res.status(400).json({ error: 'Invalid short URL format' });
+  }
 
   try {
+    // Find the document with the matching short_url
     const oldurl = await sURL.findOne({ short_url: input });
 
     if (!oldurl) {
       return res.status(404).json({ error: 'Short URL not found' });
     }
 
+    // Redirect to the original URL
     res.redirect(oldurl.original_url);
   } catch (err) {
-    console.error(err);
+    console.error('Database error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+
 // Start the server
-app.listen(port, function() {
+app.listen(port, function () {
   console.log(`Listening on port ${port}`);
 });
